@@ -7,40 +7,15 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Trash2, Download, Upload, Plus } from "lucide-react"
+import { Trash2, Download, Upload, Plus, ZoomIn, ZoomOut } from "lucide-react"
 
 interface MaskItem {
   id: string
   image: HTMLImageElement
   x: number
   y: number
-  width: number
-  height: number
+  scale: number // Changed from width/height to scale for proportional zoom
   isDragging: boolean
-  isResizing: boolean
-  resizeHandle: string | null
-}
-
-const HANDLE_SIZE = 8
-const getResizeHandle = (x: number, y: number, mask: MaskItem): string | null => {
-  const handles = [
-    { name: "nw", x: mask.x, y: mask.y },
-    { name: "ne", x: mask.x + mask.width, y: mask.y },
-    { name: "sw", x: mask.x, y: mask.y + mask.height },
-    { name: "se", x: mask.x + mask.width, y: mask.y + mask.height },
-  ]
-
-  for (const handle of handles) {
-    if (
-      x >= handle.x - HANDLE_SIZE &&
-      x <= handle.x + HANDLE_SIZE &&
-      y >= handle.y - HANDLE_SIZE &&
-      y <= handle.y + HANDLE_SIZE
-    ) {
-      return handle.name
-    }
-  }
-  return null
 }
 
 export default function ImageMaskTool() {
@@ -48,9 +23,7 @@ export default function ImageMaskTool() {
   const [masks, setMasks] = useState<MaskItem[]>([])
   const [draggedMask, setDraggedMask] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
-  const [resizingMask, setResizingMask] = useState<string | null>(null)
-  const [resizeStartPos, setResizeStartPos] = useState({ x: 0, y: 0 })
-  const [resizeStartSize, setResizeStartSize] = useState({ width: 0, height: 0, x: 0, y: 0 })
+  const [selectedMask, setSelectedMask] = useState<string | null>(null) // Added selected mask for zoom controls
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const baseImageInputRef = useRef<HTMLInputElement>(null)
@@ -75,43 +48,31 @@ export default function ImageMaskTool() {
     masks.forEach((mask) => {
       ctx.save()
       ctx.globalAlpha = 0.7
-      ctx.drawImage(mask.image, mask.x, mask.y, mask.width, mask.height)
+
+      const width = mask.image.width * mask.scale
+      const height = mask.image.height * mask.scale
+
+      ctx.drawImage(mask.image, mask.x, mask.y, width, height)
 
       ctx.globalAlpha = 1
-      if (mask.isDragging || mask.isResizing) {
-        ctx.strokeStyle = "#ef4444" // Red when dragging/resizing
+      if (mask.isDragging) {
+        ctx.strokeStyle = "#ef4444" // Red when dragging
         ctx.lineWidth = 3
         ctx.setLineDash([5, 5])
+      } else if (selectedMask === mask.id) {
+        ctx.strokeStyle = "#10b981" // Green when selected
+        ctx.lineWidth = 2
+        ctx.setLineDash([])
       } else {
         ctx.strokeStyle = "#3b82f6" // Blue normally
         ctx.lineWidth = 2
         ctx.setLineDash([])
       }
-      ctx.strokeRect(mask.x, mask.y, mask.width, mask.height)
-
-      if (!mask.isDragging && !mask.isResizing) {
-        ctx.fillStyle = "#3b82f6"
-        ctx.strokeStyle = "#ffffff"
-        ctx.lineWidth = 1
-        ctx.setLineDash([])
-
-        // Draw 4 corner handles
-        const handles = [
-          { x: mask.x, y: mask.y }, // top-left
-          { x: mask.x + mask.width, y: mask.y }, // top-right
-          { x: mask.x, y: mask.y + mask.height }, // bottom-left
-          { x: mask.x + mask.width, y: mask.y + mask.height }, // bottom-right
-        ]
-
-        handles.forEach((handle) => {
-          ctx.fillRect(handle.x - HANDLE_SIZE / 2, handle.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
-          ctx.strokeRect(handle.x - HANDLE_SIZE / 2, handle.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
-        })
-      }
+      ctx.strokeRect(mask.x, mask.y, width, height)
 
       ctx.restore()
     })
-  }, [baseImage, masks])
+  }, [baseImage, masks, selectedMask])
 
   useEffect(() => {
     drawCanvas()
@@ -151,11 +112,8 @@ export default function ImageMaskTool() {
           image: img,
           x: 50,
           y: 50,
-          width: img.width * 0.3,
-          height: img.height * 0.3,
+          scale: 0.3, // Start with 30% scale instead of fixed size
           isDragging: false,
-          isResizing: false,
-          resizeHandle: null,
         }
         setMasks((prev) => [...prev, newMask])
       }
@@ -174,30 +132,13 @@ export default function ImageMaskTool() {
     // Check if clicking on any mask (reverse order to check top masks first)
     for (let i = masks.length - 1; i >= 0; i--) {
       const mask = masks[i]
-
-      const resizeHandle = getResizeHandle(x, y, mask)
-      if (resizeHandle) {
-        setResizingMask(mask.id)
-        setResizeStartPos({ x, y })
-        setResizeStartSize({
-          width: mask.width,
-          height: mask.height,
-          x: mask.x,
-          y: mask.y,
-        })
-        setMasks((prev) =>
-          prev.map((m) =>
-            m.id === mask.id
-              ? { ...m, isResizing: true, resizeHandle }
-              : { ...m, isResizing: false, resizeHandle: null },
-          ),
-        )
-        return
-      }
+      const width = mask.image.width * mask.scale
+      const height = mask.image.height * mask.scale
 
       // Check if clicking inside mask for dragging
-      if (x >= mask.x && x <= mask.x + mask.width && y >= mask.y && y <= mask.y + mask.height) {
+      if (x >= mask.x && x <= mask.x + width && y >= mask.y && y <= mask.y + height) {
         setDraggedMask(mask.id)
+        setSelectedMask(mask.id) // Select mask when clicked
         setDragOffset({
           x: x - mask.x,
           y: y - mask.y,
@@ -218,52 +159,6 @@ export default function ImageMaskTool() {
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
 
-    if (resizingMask) {
-      const deltaX = x - resizeStartPos.x
-      const deltaY = y - resizeStartPos.y
-
-      setMasks((prev) =>
-        prev.map((mask) => {
-          if (mask.id !== resizingMask) return mask
-
-          let newX = mask.x
-          let newY = mask.y
-          let newWidth = mask.width
-          let newHeight = mask.height
-
-          switch (mask.resizeHandle) {
-            case "nw": // top-left
-              newX = resizeStartSize.x + deltaX
-              newY = resizeStartSize.y + deltaY
-              newWidth = resizeStartSize.width - deltaX
-              newHeight = resizeStartSize.height - deltaY
-              break
-            case "ne": // top-right
-              newY = resizeStartSize.y + deltaY
-              newWidth = resizeStartSize.width + deltaX
-              newHeight = resizeStartSize.height - deltaY
-              break
-            case "sw": // bottom-left
-              newX = resizeStartSize.x + deltaX
-              newWidth = resizeStartSize.width - deltaX
-              newHeight = resizeStartSize.height + deltaY
-              break
-            case "se": // bottom-right
-              newWidth = resizeStartSize.width + deltaX
-              newHeight = resizeStartSize.height + deltaY
-              break
-          }
-
-          // Minimum size constraints
-          if (newWidth < 20) newWidth = 20
-          if (newHeight < 20) newHeight = 20
-
-          return { ...mask, x: newX, y: newY, width: newWidth, height: newHeight }
-        }),
-      )
-      return
-    }
-
     // Handle dragging
     if (draggedMask) {
       setMasks((prev) =>
@@ -272,24 +167,14 @@ export default function ImageMaskTool() {
       return
     }
 
+    // Update cursor
     let cursor = "default"
     for (let i = masks.length - 1; i >= 0; i--) {
       const mask = masks[i]
-      const resizeHandle = getResizeHandle(x, y, mask)
+      const width = mask.image.width * mask.scale
+      const height = mask.image.height * mask.scale
 
-      if (resizeHandle) {
-        switch (resizeHandle) {
-          case "nw":
-          case "se":
-            cursor = "nw-resize"
-            break
-          case "ne":
-          case "sw":
-            cursor = "ne-resize"
-            break
-        }
-        break
-      } else if (x >= mask.x && x <= mask.x + mask.width && y >= mask.y && y <= mask.y + mask.height) {
+      if (x >= mask.x && x <= mask.x + width && y >= mask.y && y <= mask.y + height) {
         cursor = "grab"
         break
       }
@@ -301,16 +186,30 @@ export default function ImageMaskTool() {
   }
 
   const handleMouseUp = () => {
-    setMasks((prev) => prev.map((mask) => ({ ...mask, isDragging: false, isResizing: false, resizeHandle: null })))
+    setMasks((prev) => prev.map((mask) => ({ ...mask, isDragging: false })))
     setDraggedMask(null)
     setDragOffset({ x: 0, y: 0 })
-    setResizingMask(null)
-    setResizeStartPos({ x: 0, y: 0 })
-    setResizeStartSize({ width: 0, height: 0, x: 0, y: 0 })
+  }
+
+  const zoomIn = () => {
+    if (!selectedMask) return
+    setMasks((prev) =>
+      prev.map((mask) => (mask.id === selectedMask ? { ...mask, scale: Math.min(mask.scale * 1.2, 3) } : mask)),
+    )
+  }
+
+  const zoomOut = () => {
+    if (!selectedMask) return
+    setMasks((prev) =>
+      prev.map((mask) => (mask.id === selectedMask ? { ...mask, scale: Math.max(mask.scale * 0.8, 0.1) } : mask)),
+    )
   }
 
   const removeMask = (maskId: string) => {
     setMasks((prev) => prev.filter((mask) => mask.id !== maskId))
+    if (selectedMask === maskId) {
+      setSelectedMask(null)
+    }
   }
 
   const exportImage = () => {
@@ -336,14 +235,17 @@ export default function ImageMaskTool() {
       const tempCtx = tempCanvas.getContext("2d")
       if (!tempCtx) return
 
-      tempCanvas.width = mask.width
-      tempCanvas.height = mask.height
+      const width = mask.image.width * mask.scale
+      const height = mask.image.height * mask.scale
+
+      tempCanvas.width = width
+      tempCanvas.height = height
 
       // Draw the mask
-      tempCtx.drawImage(mask.image, 0, 0, mask.width, mask.height)
+      tempCtx.drawImage(mask.image, 0, 0, width, height)
 
       // Get image data and convert to white where there's content
-      const imageData = tempCtx.getImageData(0, 0, mask.width, mask.height)
+      const imageData = tempCtx.getImageData(0, 0, width, height)
       const data = imageData.data
 
       for (let i = 0; i < data.length; i += 4) {
@@ -373,7 +275,7 @@ export default function ImageMaskTool() {
         <div className="text-center">
           <h1 className="text-3xl font-bold text-foreground mb-2">Image Mask Tool</h1>
           <p className="text-muted-foreground">
-            Upload ảnh gốc và mask, kéo thả để định vị, resize để thay đổi kích thước
+            Upload ảnh gốc và mask, kéo thả để định vị, zoom in/out để thay đổi kích thước
           </p>
         </div>
 
@@ -412,6 +314,22 @@ export default function ImageMaskTool() {
                 />
               </div>
 
+              {selectedMask && (
+                <div className="space-y-2">
+                  <Label>Zoom mask đã chọn</Label>
+                  <div className="flex gap-2">
+                    <Button onClick={zoomOut} size="sm" variant="outline" className="flex-1 bg-transparent">
+                      <ZoomOut className="w-4 h-4 mr-1" />
+                      Zoom Out
+                    </Button>
+                    <Button onClick={zoomIn} size="sm" variant="outline" className="flex-1 bg-transparent">
+                      <ZoomIn className="w-4 h-4 mr-1" />
+                      Zoom In
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               <Button onClick={exportImage} disabled={!baseImage || masks.length === 0} className="w-full">
                 <Download className="w-4 h-4 mr-2" />
                 Xuất ảnh kết quả
@@ -422,9 +340,13 @@ export default function ImageMaskTool() {
           {/* Canvas */}
           <Card className="lg:col-span-2">
             <CardHeader>
-              <CardTitle>Canvas - Kéo thả và resize mask</CardTitle>
+              <CardTitle>Canvas - Kéo thả và zoom mask</CardTitle>
               {draggedMask && <p className="text-sm text-orange-600 font-medium">🔄 Đang kéo mask...</p>}
-              {resizingMask && <p className="text-sm text-purple-600 font-medium">📏 Đang resize mask...</p>}
+              {selectedMask && !draggedMask && (
+                <p className="text-sm text-green-600 font-medium">
+                  ✅ Mask đã chọn - Dùng nút Zoom để thay đổi kích thước
+                </p>
+              )}
             </CardHeader>
             <CardContent>
               <div className="border border-border rounded-lg p-4 bg-muted/20">
@@ -448,7 +370,7 @@ export default function ImageMaskTool() {
               )}
               {baseImage && masks.length > 0 && (
                 <p className="text-center text-sm text-muted-foreground mt-2">
-                  💡 Click và kéo mask để di chuyển. Kéo các góc để resize. Mask đang thao tác sẽ có viền đỏ đứt nét.
+                  💡 Click mask để chọn (viền xanh lá), kéo để di chuyển. Dùng nút Zoom để thay đổi kích thước.
                 </p>
               )}
             </CardContent>
@@ -509,8 +431,9 @@ export default function ImageMaskTool() {
             <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
               <li>Upload ảnh gốc (JPG, PNG, etc.)</li>
               <li>Upload một hoặc nhiều ảnh mask (định dạng PNG với background trong suốt)</li>
-              <li>Kéo thả các mask trên canvas để định vị chính xác</li>
-              <li>Kéo các góc của mask (hình vuông xanh) để thay đổi kích thước</li>
+              <li>Click vào mask trên canvas để chọn (viền sẽ chuyển thành màu xanh lá)</li>
+              <li>Kéo thả mask để định vị chính xác</li>
+              <li>Dùng nút "Zoom In" và "Zoom Out" để thay đổi kích thước mask đã chọn</li>
               <li>Click "Xuất ảnh kết quả" để tải về ảnh với nền đen và mask trắng</li>
               <li>Có thể xóa mask bằng cách hover và click nút trash</li>
             </ol>
