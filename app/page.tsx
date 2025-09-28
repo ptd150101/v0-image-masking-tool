@@ -7,27 +7,345 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Trash2, Download, Upload, Plus, ZoomIn, ZoomOut } from "lucide-react"
+import { Trash2, Download, Upload, Plus, ZoomIn, ZoomOut, Brush, Edit3, Undo, Redo, FileImage } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Slider } from "@/components/ui/slider"
 
 interface MaskItem {
   id: string
   image: HTMLImageElement
   x: number
   y: number
-  scale: number // Changed from width/height to scale for proportional zoom
+  scale: number
   isDragging: boolean
 }
 
+interface DrawingPoint {
+  x: number
+  y: number
+}
+
+interface CreatedMask {
+  id: string
+  name: string
+  dataUrl: string
+  createdAt: Date
+}
+
+type DrawingTool = "brush" | "pen"
+
 export default function ImageMaskTool() {
-  const [baseImage, setBaseImage] = useState<HTMLImageElement | null>(null)
+  const [activeTab, setActiveTab] = useState("mask-editor")
+  const [drawingTool, setDrawingTool] = useState<DrawingTool>("brush")
+  const [brushSize, setBrushSize] = useState(20)
+  const [isDrawing, setIsDrawing] = useState(false)
+  const [penPoints, setPenPoints] = useState<DrawingPoint[]>([])
+  const [drawingHistory, setDrawingHistory] = useState<ImageData[]>([])
+  const [historyIndex, setHistoryIndex] = useState(-1)
+  const [drawingBaseImage, setDrawingBaseImage] = useState<HTMLImageElement | null>(null)
+  const [createdMasks, setCreatedMasks] = useState<CreatedMask[]>([])
   const [masks, setMasks] = useState<MaskItem[]>([])
   const [draggedMask, setDraggedMask] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
-  const [selectedMask, setSelectedMask] = useState<string | null>(null) // Added selected mask for zoom controls
+  const [selectedMask, setSelectedMask] = useState<string | null>(null)
+  const [maskCanvas, setMaskCanvas] = useState<HTMLCanvasElement | null>(null) // Declared setMaskCanvas variable
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const drawingCanvasRef = useRef<HTMLCanvasElement>(null) // Added drawing canvas ref
   const baseImageInputRef = useRef<HTMLInputElement>(null)
   const maskInputRef = useRef<HTMLInputElement>(null)
+  const drawingImageInputRef = useRef<HTMLInputElement>(null) // Added drawing image input ref
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null) // Added preview canvas ref
+
+  const saveDrawingState = useCallback(() => {
+    if (!maskCanvas) return
+
+    const maskCtx = maskCanvas.getContext("2d")
+    if (!maskCtx) return
+
+    const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height)
+    const newHistory = drawingHistory.slice(0, historyIndex + 1)
+    newHistory.push(imageData)
+    setDrawingHistory(newHistory)
+    setHistoryIndex(newHistory.length - 1)
+  }, [maskCanvas, drawingHistory, historyIndex])
+
+  const drawDrawingCanvas = useCallback(() => {
+    const canvas = drawingCanvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+    // Draw base image if exists
+    if (drawingBaseImage) {
+      ctx.drawImage(drawingBaseImage, 0, 0, canvas.width, canvas.height)
+    }
+
+    if (maskCanvas) {
+      ctx.save()
+      ctx.globalAlpha = 0.3
+      ctx.globalCompositeOperation = "source-over"
+      ctx.drawImage(maskCanvas, 0, 0)
+      ctx.restore()
+    }
+
+    if (drawingTool === "pen" && penPoints.length > 0) {
+      ctx.save()
+      penPoints.forEach((point, index) => {
+        // Draw point as bright yellow circle
+        ctx.fillStyle = "#FFD700"
+        ctx.strokeStyle = "#FF6B00"
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(point.x, point.y, 6, 0, 2 * Math.PI)
+        ctx.fill()
+        ctx.stroke()
+
+        // Draw point number
+        ctx.fillStyle = "#000000"
+        ctx.font = "12px Arial"
+        ctx.textAlign = "center"
+        ctx.fillText((index + 1).toString(), point.x, point.y + 4)
+      })
+
+      // Draw lines connecting points
+      if (penPoints.length > 1) {
+        ctx.strokeStyle = "#FF6B00"
+        ctx.lineWidth = 2
+        ctx.setLineDash([5, 5])
+        ctx.beginPath()
+        ctx.moveTo(penPoints[0].x, penPoints[0].y)
+        for (let i = 1; i < penPoints.length; i++) {
+          ctx.lineTo(penPoints[i].x, penPoints[i].y)
+        }
+        // Draw line back to first point to show closure
+        if (penPoints.length > 2) {
+          ctx.lineTo(penPoints[0].x, penPoints[0].y)
+        }
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
+      ctx.restore()
+    }
+  }, [drawingBaseImage, drawingTool, penPoints, maskCanvas])
+
+  const drawPreviewCanvas = useCallback(() => {
+    const canvas = previewCanvasRef.current
+    if (!canvas || !drawingBaseImage || !maskCanvas) return
+
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+    // Fill with black background
+    ctx.fillStyle = "#000000"
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+    // Create temporary canvas to apply mask to original image
+    const tempCanvas = document.createElement("canvas")
+    tempCanvas.width = canvas.width
+    tempCanvas.height = canvas.height
+    const tempCtx = tempCanvas.getContext("2d")
+    if (!tempCtx) return
+
+    // Draw original image
+    tempCtx.drawImage(drawingBaseImage, 0, 0, canvas.width, canvas.height)
+
+    // Apply mask using composite operation
+    tempCtx.globalCompositeOperation = "destination-in"
+    tempCtx.drawImage(maskCanvas, 0, 0)
+
+    // Draw the masked image onto preview canvas
+    ctx.drawImage(tempCanvas, 0, 0)
+  }, [drawingBaseImage, maskCanvas])
+
+  const handleDrawingImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const img = new Image()
+    img.onload = () => {
+      setDrawingBaseImage(img)
+
+      // Resize canvas to fit image
+      const canvas = drawingCanvasRef.current
+      const previewCanvas = previewCanvasRef.current
+      if (canvas && previewCanvas) {
+        const maxWidth = 800
+        const maxHeight = 600
+        const ratio = Math.min(maxWidth / img.width, maxHeight / img.height)
+
+        canvas.width = img.width * ratio
+        canvas.height = img.height * ratio
+        previewCanvas.width = canvas.width // Set same size for preview
+        previewCanvas.height = canvas.height
+
+        const newMaskCanvas = document.createElement("canvas")
+        newMaskCanvas.width = canvas.width
+        newMaskCanvas.height = canvas.height
+        const maskCtx = newMaskCanvas.getContext("2d")
+        if (maskCtx) {
+          // Fill with black background
+          maskCtx.fillStyle = "#000000"
+          maskCtx.fillRect(0, 0, newMaskCanvas.width, newMaskCanvas.height)
+        }
+        setMaskCanvas(newMaskCanvas)
+
+        // Clear drawing history when new image is loaded
+        setDrawingHistory([])
+        setHistoryIndex(-1)
+        setPenPoints([])
+      }
+    }
+    img.src = URL.createObjectURL(file)
+  }
+
+  const startDrawing = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = drawingCanvasRef.current
+    if (!canvas || !maskCanvas) return
+
+    const rect = canvas.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+
+    if (drawingTool === "brush") {
+      setIsDrawing(true)
+      saveDrawingState()
+
+      const maskCtx = maskCanvas.getContext("2d")
+      if (maskCtx) {
+        maskCtx.globalCompositeOperation = "source-over"
+        maskCtx.fillStyle = "#FFFFFF"
+        maskCtx.strokeStyle = "#FFFFFF"
+        maskCtx.lineWidth = brushSize
+        maskCtx.lineCap = "round"
+        maskCtx.beginPath()
+        maskCtx.arc(x, y, brushSize / 2, 0, 2 * Math.PI)
+        maskCtx.fill()
+      }
+    } else if (drawingTool === "pen") {
+      setPenPoints((prev) => [...prev, { x, y }])
+    }
+  }
+
+  const continueDrawing = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDrawing || drawingTool !== "brush" || !drawingCanvasRef.current || !maskCanvas) return
+
+    const canvas = drawingCanvasRef.current
+    if (!canvas) return
+
+    const rect = canvas.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+
+    const maskCtx = maskCanvas.getContext("2d")
+    if (maskCtx) {
+      maskCtx.globalCompositeOperation = "source-over"
+      maskCtx.fillStyle = "#FFFFFF"
+      maskCtx.strokeStyle = "#FFFFFF"
+      maskCtx.lineWidth = brushSize
+      maskCtx.lineCap = "round"
+      maskCtx.beginPath()
+      maskCtx.arc(x, y, brushSize / 2, 0, 2 * Math.PI)
+      maskCtx.fill()
+    }
+  }
+
+  const stopDrawing = () => {
+    setIsDrawing(false)
+  }
+
+  const completePenPath = () => {
+    if (penPoints.length < 3 || !maskCanvas) return
+
+    const maskCtx = maskCanvas.getContext("2d")
+    if (!maskCtx) return
+
+    saveDrawingState()
+
+    maskCtx.globalCompositeOperation = "source-over"
+    maskCtx.fillStyle = "#FFFFFF"
+    maskCtx.beginPath()
+    maskCtx.moveTo(penPoints[0].x, penPoints[0].y)
+
+    for (let i = 1; i < penPoints.length; i++) {
+      maskCtx.lineTo(penPoints[i].x, penPoints[i].y)
+    }
+
+    maskCtx.closePath()
+    maskCtx.fill()
+
+    setPenPoints([])
+  }
+
+  const undoDrawing = () => {
+    if (historyIndex > 0 && maskCanvas) {
+      const maskCtx = maskCanvas.getContext("2d")
+      if (!maskCtx) return
+
+      const newIndex = historyIndex - 1
+      maskCtx.putImageData(drawingHistory[newIndex], 0, 0)
+      setHistoryIndex(newIndex)
+    }
+  }
+
+  const redoDrawing = () => {
+    if (historyIndex < drawingHistory.length - 1 && maskCanvas) {
+      const maskCtx = maskCanvas.getContext("2d")
+      if (!maskCtx) return
+
+      const newIndex = historyIndex + 1
+      maskCtx.putImageData(drawingHistory[newIndex], 0, 0)
+      setHistoryIndex(newIndex)
+    }
+  }
+
+  const exportDrawnMask = () => {
+    if (!maskCanvas) return
+
+    const maskName = `Mask_${new Date().toLocaleTimeString()}`
+    const dataUrl = maskCanvas.toDataURL()
+    const newMask: CreatedMask = {
+      id: Date.now().toString(),
+      name: maskName,
+      dataUrl: dataUrl,
+      createdAt: new Date(),
+    }
+    setCreatedMasks((prev) => [...prev, newMask])
+
+    // Download the mask
+    const link = document.createElement("a")
+    link.download = `${maskName}.png`
+    link.href = dataUrl
+    link.click()
+  }
+
+  const importMaskToEditor = (createdMask: CreatedMask) => {
+    const img = new Image()
+    img.onload = () => {
+      const newMask: MaskItem = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        image: img,
+        x: 50,
+        y: 50,
+        scale: 0.3,
+        isDragging: false,
+      }
+      setMasks((prev) => [...prev, newMask])
+      setActiveTab("mask-editor") // Switch to mask editor tab
+    }
+    img.src = createdMask.dataUrl
+  }
+
+  const deleteCreatedMask = (maskId: string) => {
+    setCreatedMasks((prev) => prev.filter((mask) => mask.id !== maskId))
+  }
 
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current
@@ -40,8 +358,8 @@ export default function ImageMaskTool() {
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
     // Draw base image if exists
-    if (baseImage) {
-      ctx.drawImage(baseImage, 0, 0, canvas.width, canvas.height)
+    if (drawingBaseImage) {
+      ctx.drawImage(drawingBaseImage, 0, 0, canvas.width, canvas.height)
     }
 
     // Draw masks with semi-transparent overlay
@@ -72,11 +390,16 @@ export default function ImageMaskTool() {
 
       ctx.restore()
     })
-  }, [baseImage, masks, selectedMask])
+  }, [drawingBaseImage, masks, selectedMask])
 
   useEffect(() => {
     drawCanvas()
   }, [drawCanvas])
+
+  useEffect(() => {
+    drawDrawingCanvas()
+    drawPreviewCanvas() // Also update preview
+  }, [drawDrawingCanvas, drawPreviewCanvas])
 
   const handleBaseImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -84,7 +407,7 @@ export default function ImageMaskTool() {
 
     const img = new Image()
     img.onload = () => {
-      setBaseImage(img)
+      setDrawingBaseImage(img)
 
       // Resize canvas to fit image
       const canvas = canvasRef.current
@@ -112,7 +435,7 @@ export default function ImageMaskTool() {
           image: img,
           x: 50,
           y: 50,
-          scale: 0.3, // Start with 30% scale instead of fixed size
+          scale: 0.3,
           isDragging: false,
         }
         setMasks((prev) => [...prev, newMask])
@@ -138,7 +461,7 @@ export default function ImageMaskTool() {
       // Check if clicking inside mask for dragging
       if (x >= mask.x && x <= mask.x + width && y >= mask.y && y <= mask.y + height) {
         setDraggedMask(mask.id)
-        setSelectedMask(mask.id) // Select mask when clicked
+        setSelectedMask(mask.id)
         setDragOffset({
           x: x - mask.x,
           y: y - mask.y,
@@ -214,7 +537,7 @@ export default function ImageMaskTool() {
 
   const exportImage = () => {
     const canvas = canvasRef.current
-    if (!canvas || !baseImage) return
+    if (!canvas || !drawingBaseImage) return
 
     // Create a new canvas for export
     const exportCanvas = document.createElement("canvas")
@@ -275,152 +598,391 @@ export default function ImageMaskTool() {
         <div className="text-center">
           <h1 className="text-3xl font-bold text-foreground mb-2">Image Mask Tool</h1>
           <p className="text-muted-foreground">
-            Upload ảnh gốc và mask, kéo thả để định vị, zoom in/out để thay đổi kích thước
+            Chỉnh sửa mask với drag & drop hoặc vẽ mask trực tiếp bằng brush/pen tool
           </p>
+          <div className="flex justify-center gap-4 mt-4">
+            <Button
+              variant={activeTab === "mask-editor" ? "default" : "outline"}
+              onClick={() => setActiveTab("mask-editor")}
+            >
+              📝 Mask Editor
+            </Button>
+            <Button
+              variant={activeTab === "drawing-tools" ? "default" : "outline"}
+              onClick={() => setActiveTab("drawing-tools")}
+            >
+              🎨 Vẽ Mask
+            </Button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Upload Controls */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Upload className="w-5 h-5" />
-                Upload Files
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <Label htmlFor="base-image">Ảnh gốc</Label>
-                <Input
-                  id="base-image"
-                  type="file"
-                  accept="image/*"
-                  ref={baseImageInputRef}
-                  onChange={handleBaseImageUpload}
-                  className="mt-1"
-                />
-              </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="mask-editor">Mask Editor</TabsTrigger>
+            <TabsTrigger value="drawing-tools">Drawing Tools</TabsTrigger>
+          </TabsList>
 
-              <div>
-                <Label htmlFor="mask-images">Ảnh mask (có thể chọn nhiều)</Label>
-                <Input
-                  id="mask-images"
-                  type="file"
-                  accept="image/png"
-                  multiple
-                  ref={maskInputRef}
-                  onChange={handleMaskUpload}
-                  className="mt-1"
-                />
-              </div>
-
-              {selectedMask && (
-                <div className="space-y-2">
-                  <Label>Zoom mask đã chọn</Label>
-                  <div className="flex gap-2">
-                    <Button onClick={zoomOut} size="sm" variant="outline" className="flex-1 bg-transparent">
-                      <ZoomOut className="w-4 h-4 mr-1" />
-                      Zoom Out
-                    </Button>
-                    <Button onClick={zoomIn} size="sm" variant="outline" className="flex-1 bg-transparent">
-                      <ZoomIn className="w-4 h-4 mr-1" />
-                      Zoom In
-                    </Button>
+          <TabsContent value="mask-editor" className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Upload Controls */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Upload className="w-5 h-5" />
+                    Upload Files
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label htmlFor="base-image">Ảnh gốc</Label>
+                    <Input
+                      id="base-image"
+                      type="file"
+                      accept="image/*"
+                      ref={baseImageInputRef}
+                      onChange={handleBaseImageUpload}
+                      className="mt-1"
+                    />
                   </div>
-                </div>
-              )}
 
-              <Button onClick={exportImage} disabled={!baseImage || masks.length === 0} className="w-full">
-                <Download className="w-4 h-4 mr-2" />
-                Xuất ảnh kết quả
-              </Button>
-            </CardContent>
-          </Card>
+                  <div>
+                    <Label htmlFor="mask-images">Ảnh mask (có thể chọn nhiều)</Label>
+                    <Input
+                      id="mask-images"
+                      type="file"
+                      accept="image/png"
+                      multiple
+                      ref={maskInputRef}
+                      onChange={handleMaskUpload}
+                      className="mt-1"
+                    />
+                  </div>
 
-          {/* Canvas */}
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle>Canvas - Kéo thả và zoom mask</CardTitle>
-              {draggedMask && <p className="text-sm text-orange-600 font-medium">🔄 Đang kéo mask...</p>}
-              {selectedMask && !draggedMask && (
-                <p className="text-sm text-green-600 font-medium">
-                  ✅ Mask đã chọn - Dùng nút Zoom để thay đổi kích thước
-                </p>
-              )}
-            </CardHeader>
-            <CardContent>
-              <div className="border border-border rounded-lg p-4 bg-muted/20">
-                <canvas
-                  ref={canvasRef}
-                  width={800}
-                  height={600}
-                  className="max-w-full h-auto border border-border rounded"
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseUp}
-                />
-              </div>
+                  {selectedMask && (
+                    <div className="space-y-2">
+                      <Label>Zoom mask đã chọn</Label>
+                      <div className="flex gap-2">
+                        <Button onClick={zoomOut} size="sm" variant="outline" className="flex-1 bg-transparent">
+                          <ZoomOut className="w-4 h-4 mr-1" />
+                          Zoom Out
+                        </Button>
+                        <Button onClick={zoomIn} size="sm" variant="outline" className="flex-1 bg-transparent">
+                          <ZoomIn className="w-4 h-4 mr-1" />
+                          Zoom In
+                        </Button>
+                      </div>
+                    </div>
+                  )}
 
-              {!baseImage && (
-                <p className="text-center text-muted-foreground mt-4">Vui lòng upload ảnh gốc để bắt đầu</p>
-              )}
-              {baseImage && masks.length === 0 && (
-                <p className="text-center text-muted-foreground mt-4">Upload mask để bắt đầu kéo thả</p>
-              )}
-              {baseImage && masks.length > 0 && (
-                <p className="text-center text-sm text-muted-foreground mt-2">
-                  💡 Click mask để chọn (viền xanh lá), kéo để di chuyển. Dùng nút Zoom để thay đổi kích thước.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+                  <Button onClick={exportImage} disabled={!drawingBaseImage || masks.length === 0} className="w-full">
+                    <Download className="w-4 h-4 mr-2" />
+                    Xuất ảnh kết quả
+                  </Button>
+                </CardContent>
+              </Card>
 
-        {/* Mask List */}
-        {masks.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Plus className="w-5 h-5" />
-                Danh sách Mask ({masks.length})
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                {masks.map((mask, index) => (
-                  <div key={mask.id} className="relative group">
-                    <div className="aspect-square bg-muted rounded-lg overflow-hidden border border-border">
-                      <canvas
-                        width={100}
-                        height={100}
-                        className="w-full h-full object-cover"
-                        ref={(canvas) => {
-                          if (canvas) {
-                            const ctx = canvas.getContext("2d")
-                            if (ctx) {
-                              ctx.clearRect(0, 0, 100, 100)
-                              ctx.drawImage(mask.image, 0, 0, 100, 100)
-                            }
-                          }
-                        }}
+              {/* Canvas */}
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle>Canvas - Kéo thả và zoom mask</CardTitle>
+                  {draggedMask && <p className="text-sm text-orange-600 font-medium">🔄 Đang kéo mask...</p>}
+                  {selectedMask && !draggedMask && (
+                    <p className="text-sm text-green-600 font-medium">
+                      ✅ Mask đã chọn - Dùng nút Zoom để thay đổi kích thước
+                    </p>
+                  )}
+                </CardHeader>
+                <CardContent>
+                  <div className="border border-border rounded-lg p-4 bg-muted/20">
+                    <canvas
+                      ref={canvasRef}
+                      width={800}
+                      height={600}
+                      className="max-w-full h-auto border border-border rounded"
+                      onMouseDown={handleMouseDown}
+                      onMouseMove={handleMouseMove}
+                      onMouseUp={handleMouseUp}
+                      onMouseLeave={handleMouseUp}
+                    />
+                  </div>
+
+                  {!drawingBaseImage && (
+                    <p className="text-center text-muted-foreground mt-4">Vui lòng upload ảnh gốc để bắt đầu</p>
+                  )}
+                  {drawingBaseImage && masks.length === 0 && (
+                    <p className="text-center text-muted-foreground mt-4">Upload mask để bắt đầu kéo thả</p>
+                  )}
+                  {drawingBaseImage && masks.length > 0 && (
+                    <p className="text-center text-sm text-muted-foreground mt-2">
+                      💡 Click mask để chọn (viền xanh lá), kéo để di chuyển. Dùng nút Zoom để thay đổi kích thước.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Mask List */}
+            {masks.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Plus className="w-5 h-5" />
+                    Danh sách Mask ({masks.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                    {masks.map((mask, index) => (
+                      <div key={mask.id} className="relative group">
+                        <div className="aspect-square bg-muted rounded-lg overflow-hidden border border-border">
+                          <canvas
+                            width={100}
+                            height={100}
+                            className="w-full h-full object-cover"
+                            ref={(canvas) => {
+                              if (canvas) {
+                                const ctx = canvas.getContext("2d")
+                                if (ctx) {
+                                  ctx.clearRect(0, 0, 100, 100)
+                                  ctx.drawImage(mask.image, 0, 0, 100, 100)
+                                }
+                              }
+                            }}
+                          />
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="absolute -top-2 -right-2 w-6 h-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => removeMask(mask.id)}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                        <p className="text-xs text-center mt-1 text-muted-foreground">Mask {index + 1}</p>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {createdMasks.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileImage className="w-5 h-5" />
+                    Mask đã tạo từ Drawing Tools ({createdMasks.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                    {createdMasks.map((createdMask) => (
+                      <div key={createdMask.id} className="relative group">
+                        <div className="aspect-square bg-muted rounded-lg overflow-hidden border border-border">
+                          <img
+                            src={createdMask.dataUrl || "/placeholder.svg"}
+                            alt={createdMask.name}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <div className="absolute -top-2 -right-2 flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="w-6 h-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={() => importMaskToEditor(createdMask)}
+                            title="Import vào Mask Editor"
+                          >
+                            <Plus className="w-3 h-3" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="w-6 h-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={() => deleteCreatedMask(createdMask.id)}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                        <p className="text-xs text-center mt-1 text-muted-foreground">{createdMask.name}</p>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          <TabsContent value="drawing-tools" className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Drawing Controls */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Brush className="w-5 h-5" />
+                    Drawing Tools
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label htmlFor="drawing-image">Ảnh gốc để vẽ mask</Label>
+                    <Input
+                      id="drawing-image"
+                      type="file"
+                      accept="image/*"
+                      ref={drawingImageInputRef}
+                      onChange={handleDrawingImageUpload}
+                      className="mt-1"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Chọn công cụ</Label>
+                    <div className="flex gap-2">
+                      <Button
+                        variant={drawingTool === "brush" ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setDrawingTool("brush")}
+                        className="flex-1"
+                      >
+                        <Brush className="w-4 h-4 mr-1" />
+                        Brush
+                      </Button>
+                      <Button
+                        variant={drawingTool === "pen" ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setDrawingTool("pen")}
+                        className="flex-1"
+                      >
+                        <Edit3 className="w-4 h-4 mr-1" />
+                        Pen
+                      </Button>
+                    </div>
+                  </div>
+
+                  {drawingTool === "brush" && (
+                    <div className="space-y-2">
+                      <Label>Kích thước brush: {brushSize}px</Label>
+                      <Slider
+                        value={[brushSize]}
+                        onValueChange={(value) => setBrushSize(value[0])}
+                        min={5}
+                        max={100}
+                        step={5}
+                        className="w-full"
                       />
                     </div>
+                  )}
+
+                  {drawingTool === "pen" && penPoints.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Pen Tool - {penPoints.length} điểm</Label>
+                      <div className="flex gap-2">
+                        <Button onClick={completePenPath} size="sm" className="flex-1" disabled={penPoints.length < 3}>
+                          Hoàn thành đa giác
+                        </Button>
+                        <Button onClick={() => setPenPoints([])} size="sm" variant="outline" className="flex-1">
+                          Hủy
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
                     <Button
+                      onClick={undoDrawing}
+                      disabled={historyIndex <= 0}
                       size="sm"
-                      variant="destructive"
-                      className="absolute -top-2 -right-2 w-6 h-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => removeMask(mask.id)}
+                      variant="outline"
+                      className="flex-1 bg-transparent"
                     >
-                      <Trash2 className="w-3 h-3" />
+                      <Undo className="w-4 h-4 mr-1" />
+                      Undo
                     </Button>
-                    <p className="text-xs text-center mt-1 text-muted-foreground">Mask {index + 1}</p>
+                    <Button
+                      onClick={redoDrawing}
+                      disabled={historyIndex >= drawingHistory.length - 1}
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                    >
+                      <Redo className="w-4 h-4 mr-1" />
+                      Redo
+                    </Button>
                   </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+
+                  <Button onClick={exportDrawnMask} disabled={!drawingBaseImage} className="w-full">
+                    <Download className="w-4 h-4 mr-2" />
+                    Xuất mask (đen trắng)
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Drawing Canvas */}
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle>Canvas - Vẽ mask bằng {drawingTool === "brush" ? "Brush" : "Pen"} Tool</CardTitle>
+                  {isDrawing && <p className="text-sm text-green-600 font-medium">🎨 Đang vẽ vùng mask...</p>}
+                  {drawingTool === "pen" && penPoints.length > 0 && (
+                    <p className="text-sm text-orange-600 font-medium">
+                      ✏️ Pen Tool - {penPoints.length} điểm đã chọn. Cần ít nhất 3 điểm để tạo đa giác.
+                    </p>
+                  )}
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="border border-border rounded-lg p-4 bg-muted/20">
+                    <canvas
+                      ref={drawingCanvasRef}
+                      width={800}
+                      height={600}
+                      className="max-w-full h-auto border border-border rounded"
+                      style={{
+                        cursor:
+                          drawingTool === "brush"
+                            ? `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="${brushSize}" height="${brushSize}" viewBox="0 0 ${brushSize} ${brushSize}"><circle cx="${brushSize / 2}" cy="${brushSize / 2}" r="${brushSize / 2 - 1}" fill="none" stroke="%23FFFFFF" strokeWidth="2"/></svg>') ${brushSize / 2} ${brushSize / 2}, crosshair`
+                            : "crosshair",
+                      }}
+                      onMouseDown={startDrawing}
+                      onMouseMove={continueDrawing}
+                      onMouseUp={stopDrawing}
+                      onMouseLeave={stopDrawing}
+                    />
+                  </div>
+
+                  {/* Permanent preview canvas below */}
+                  <div>
+                    <h4 className="font-semibold mb-2 text-sm">🎭 Preview kết quả (ảnh gốc + mask):</h4>
+                    <div className="border border-border rounded-lg p-4 bg-muted/20">
+                      <canvas
+                        ref={previewCanvasRef}
+                        width={800}
+                        height={600}
+                        className="max-w-full h-auto border border-border rounded"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2 text-center">
+                      Chỉ vùng mask (trắng) hiển thị ảnh gốc, phần còn lại là đen
+                    </p>
+                  </div>
+
+                  {!drawingBaseImage && (
+                    <p className="text-center text-muted-foreground mt-4">Vui lòng upload ảnh gốc để bắt đầu vẽ</p>
+                  )}
+                  {drawingBaseImage && (
+                    <div className="text-center text-sm text-muted-foreground mt-2 space-y-1">
+                      <p>
+                        💡 <strong>Brush Tool:</strong> Vẽ vùng mask trên ảnh → Xem preview bên dưới
+                      </p>
+                      <p>
+                        💡 <strong>Pen Tool:</strong> Click tạo điểm → Hoàn thành đa giác → Xem preview bên dưới
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        </Tabs>
 
         {/* Instructions */}
         <Card>
@@ -428,15 +990,28 @@ export default function ImageMaskTool() {
             <CardTitle>Hướng dẫn sử dụng</CardTitle>
           </CardHeader>
           <CardContent>
-            <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
-              <li>Upload ảnh gốc (JPG, PNG, etc.)</li>
-              <li>Upload một hoặc nhiều ảnh mask (định dạng PNG với background trong suốt)</li>
-              <li>Click vào mask trên canvas để chọn (viền sẽ chuyển thành màu xanh lá)</li>
-              <li>Kéo thả mask để định vị chính xác</li>
-              <li>Dùng nút "Zoom In" và "Zoom Out" để thay đổi kích thước mask đã chọn</li>
-              <li>Click "Xuất ảnh kết quả" để tải về ảnh với nền đen và mask trắng</li>
-              <li>Có thể xóa mask bằng cách hover và click nút trash</li>
-            </ol>
+            <div className="grid md:grid-cols-2 gap-6">
+              <div>
+                <h4 className="font-semibold mb-2">Mask Editor</h4>
+                <ol className="list-decimal list-inside space-y-1 text-sm text-muted-foreground">
+                  <li>Upload ảnh gốc và mask có sẵn</li>
+                  <li>Kéo thả mask để định vị</li>
+                  <li>Zoom in/out để thay đổi kích thước</li>
+                  <li>Import mask từ Drawing Tools</li>
+                  <li>Xuất ảnh kết quả (nền đen, mask trắng)</li>
+                </ol>
+              </div>
+              <div>
+                <h4 className="font-semibold mb-2">Drawing Tools</h4>
+                <ol className="list-decimal list-inside space-y-1 text-sm text-muted-foreground">
+                  <li>Upload ảnh gốc để vẽ mask</li>
+                  <li>Chọn Brush Tool để vẽ tự do (màu trắng)</li>
+                  <li>Chọn Pen Tool để tạo vùng chính xác (điểm vàng)</li>
+                  <li>Dùng Undo/Redo để chỉnh sửa</li>
+                  <li>Xuất mask đen trắng và import vào Mask Editor</li>
+                </ol>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
