@@ -44,31 +44,33 @@ export default function ImageMaskTool() {
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [drawingBaseImage, setDrawingBaseImage] = useState<HTMLImageElement | null>(null)
   const [createdMasks, setCreatedMasks] = useState<CreatedMask[]>([])
+
+  // Existing code
+  const [baseImage, setBaseImage] = useState<HTMLImageElement | null>(null)
   const [masks, setMasks] = useState<MaskItem[]>([])
   const [draggedMask, setDraggedMask] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const [selectedMask, setSelectedMask] = useState<string | null>(null)
-  const [maskCanvas, setMaskCanvas] = useState<HTMLCanvasElement | null>(null) // Declared setMaskCanvas variable
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const drawingCanvasRef = useRef<HTMLCanvasElement>(null) // Added drawing canvas ref
   const baseImageInputRef = useRef<HTMLInputElement>(null)
   const maskInputRef = useRef<HTMLInputElement>(null)
   const drawingImageInputRef = useRef<HTMLInputElement>(null) // Added drawing image input ref
-  const previewCanvasRef = useRef<HTMLCanvasElement>(null) // Added preview canvas ref
 
   const saveDrawingState = useCallback(() => {
-    if (!maskCanvas) return
+    const canvas = drawingCanvasRef.current
+    if (!canvas) return
 
-    const maskCtx = maskCanvas.getContext("2d")
-    if (!maskCtx) return
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
 
-    const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height)
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
     const newHistory = drawingHistory.slice(0, historyIndex + 1)
     newHistory.push(imageData)
     setDrawingHistory(newHistory)
     setHistoryIndex(newHistory.length - 1)
-  }, [maskCanvas, drawingHistory, historyIndex])
+  }, [drawingHistory, historyIndex])
 
   const drawDrawingCanvas = useCallback(() => {
     const canvas = drawingCanvasRef.current
@@ -83,14 +85,6 @@ export default function ImageMaskTool() {
     // Draw base image if exists
     if (drawingBaseImage) {
       ctx.drawImage(drawingBaseImage, 0, 0, canvas.width, canvas.height)
-    }
-
-    if (maskCanvas) {
-      ctx.save()
-      ctx.globalAlpha = 0.3
-      ctx.globalCompositeOperation = "source-over"
-      ctx.drawImage(maskCanvas, 0, 0)
-      ctx.restore()
     }
 
     if (drawingTool === "pen" && penPoints.length > 0) {
@@ -131,39 +125,7 @@ export default function ImageMaskTool() {
       }
       ctx.restore()
     }
-  }, [drawingBaseImage, drawingTool, penPoints, maskCanvas])
-
-  const drawPreviewCanvas = useCallback(() => {
-    const canvas = previewCanvasRef.current
-    if (!canvas || !drawingBaseImage || !maskCanvas) return
-
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-
-    // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-    // Fill with black background
-    ctx.fillStyle = "#000000"
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-    // Create temporary canvas to apply mask to original image
-    const tempCanvas = document.createElement("canvas")
-    tempCanvas.width = canvas.width
-    tempCanvas.height = canvas.height
-    const tempCtx = tempCanvas.getContext("2d")
-    if (!tempCtx) return
-
-    // Draw original image
-    tempCtx.drawImage(drawingBaseImage, 0, 0, canvas.width, canvas.height)
-
-    // Apply mask using composite operation
-    tempCtx.globalCompositeOperation = "destination-in"
-    tempCtx.drawImage(maskCanvas, 0, 0)
-
-    // Draw the masked image onto preview canvas
-    ctx.drawImage(tempCanvas, 0, 0)
-  }, [drawingBaseImage, maskCanvas])
+  }, [drawingBaseImage, drawingTool, penPoints])
 
   const handleDrawingImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -175,27 +137,13 @@ export default function ImageMaskTool() {
 
       // Resize canvas to fit image
       const canvas = drawingCanvasRef.current
-      const previewCanvas = previewCanvasRef.current
-      if (canvas && previewCanvas) {
+      if (canvas) {
         const maxWidth = 800
         const maxHeight = 600
         const ratio = Math.min(maxWidth / img.width, maxHeight / img.height)
 
         canvas.width = img.width * ratio
         canvas.height = img.height * ratio
-        previewCanvas.width = canvas.width // Set same size for preview
-        previewCanvas.height = canvas.height
-
-        const newMaskCanvas = document.createElement("canvas")
-        newMaskCanvas.width = canvas.width
-        newMaskCanvas.height = canvas.height
-        const maskCtx = newMaskCanvas.getContext("2d")
-        if (maskCtx) {
-          // Fill with black background
-          maskCtx.fillStyle = "#000000"
-          maskCtx.fillRect(0, 0, newMaskCanvas.width, newMaskCanvas.height)
-        }
-        setMaskCanvas(newMaskCanvas)
 
         // Clear drawing history when new image is loaded
         setDrawingHistory([])
@@ -208,7 +156,7 @@ export default function ImageMaskTool() {
 
   const startDrawing = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = drawingCanvasRef.current
-    if (!canvas || !maskCanvas) return
+    if (!canvas) return
 
     const rect = canvas.getBoundingClientRect()
     const x = event.clientX - rect.left
@@ -218,16 +166,16 @@ export default function ImageMaskTool() {
       setIsDrawing(true)
       saveDrawingState()
 
-      const maskCtx = maskCanvas.getContext("2d")
-      if (maskCtx) {
-        maskCtx.globalCompositeOperation = "source-over"
-        maskCtx.fillStyle = "#FFFFFF"
-        maskCtx.strokeStyle = "#FFFFFF"
-        maskCtx.lineWidth = brushSize
-        maskCtx.lineCap = "round"
-        maskCtx.beginPath()
-        maskCtx.arc(x, y, brushSize / 2, 0, 2 * Math.PI)
-        maskCtx.fill()
+      const ctx = canvas.getContext("2d")
+      if (ctx) {
+        ctx.globalCompositeOperation = "source-over"
+        ctx.fillStyle = "#00FFFF"
+        ctx.strokeStyle = "#00FFFF"
+        ctx.lineWidth = brushSize
+        ctx.lineCap = "round"
+        ctx.beginPath()
+        ctx.arc(x, y, brushSize / 2, 0, 2 * Math.PI)
+        ctx.fill()
       }
     } else if (drawingTool === "pen") {
       setPenPoints((prev) => [...prev, { x, y }])
@@ -235,7 +183,7 @@ export default function ImageMaskTool() {
   }
 
   const continueDrawing = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || drawingTool !== "brush" || !drawingCanvasRef.current || !maskCanvas) return
+    if (!isDrawing || drawingTool !== "brush") return
 
     const canvas = drawingCanvasRef.current
     if (!canvas) return
@@ -244,16 +192,16 @@ export default function ImageMaskTool() {
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
 
-    const maskCtx = maskCanvas.getContext("2d")
-    if (maskCtx) {
-      maskCtx.globalCompositeOperation = "source-over"
-      maskCtx.fillStyle = "#FFFFFF"
-      maskCtx.strokeStyle = "#FFFFFF"
-      maskCtx.lineWidth = brushSize
-      maskCtx.lineCap = "round"
-      maskCtx.beginPath()
-      maskCtx.arc(x, y, brushSize / 2, 0, 2 * Math.PI)
-      maskCtx.fill()
+    const ctx = canvas.getContext("2d")
+    if (ctx) {
+      ctx.globalCompositeOperation = "source-over"
+      ctx.fillStyle = "#00FFFF"
+      ctx.strokeStyle = "#00FFFF"
+      ctx.lineWidth = brushSize
+      ctx.lineCap = "round"
+      ctx.beginPath()
+      ctx.arc(x, y, brushSize / 2, 0, 2 * Math.PI)
+      ctx.fill()
     }
   }
 
@@ -262,55 +210,109 @@ export default function ImageMaskTool() {
   }
 
   const completePenPath = () => {
-    if (penPoints.length < 3 || !maskCanvas) return
+    if (penPoints.length < 3) return
 
-    const maskCtx = maskCanvas.getContext("2d")
-    if (!maskCtx) return
+    const canvas = drawingCanvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
 
     saveDrawingState()
 
-    maskCtx.globalCompositeOperation = "source-over"
-    maskCtx.fillStyle = "#FFFFFF"
-    maskCtx.beginPath()
-    maskCtx.moveTo(penPoints[0].x, penPoints[0].y)
+    ctx.globalCompositeOperation = "source-over"
+    ctx.fillStyle = "#00FFFF"
+    ctx.beginPath()
+    ctx.moveTo(penPoints[0].x, penPoints[0].y)
 
     for (let i = 1; i < penPoints.length; i++) {
-      maskCtx.lineTo(penPoints[i].x, penPoints[i].y)
+      ctx.lineTo(penPoints[i].x, penPoints[i].y)
     }
 
-    maskCtx.closePath()
-    maskCtx.fill()
+    ctx.closePath()
+    ctx.fill()
 
     setPenPoints([])
   }
 
   const undoDrawing = () => {
-    if (historyIndex > 0 && maskCanvas) {
-      const maskCtx = maskCanvas.getContext("2d")
-      if (!maskCtx) return
+    if (historyIndex > 0) {
+      const canvas = drawingCanvasRef.current
+      if (!canvas) return
+
+      const ctx = canvas.getContext("2d")
+      if (!ctx) return
 
       const newIndex = historyIndex - 1
-      maskCtx.putImageData(drawingHistory[newIndex], 0, 0)
+      ctx.putImageData(drawingHistory[newIndex], 0, 0)
       setHistoryIndex(newIndex)
     }
   }
 
   const redoDrawing = () => {
-    if (historyIndex < drawingHistory.length - 1 && maskCanvas) {
-      const maskCtx = maskCanvas.getContext("2d")
-      if (!maskCtx) return
+    if (historyIndex < drawingHistory.length - 1) {
+      const canvas = drawingCanvasRef.current
+      if (!canvas) return
+
+      const ctx = canvas.getContext("2d")
+      if (!ctx) return
 
       const newIndex = historyIndex + 1
-      maskCtx.putImageData(drawingHistory[newIndex], 0, 0)
+      ctx.putImageData(drawingHistory[newIndex], 0, 0)
       setHistoryIndex(newIndex)
     }
   }
 
   const exportDrawnMask = () => {
-    if (!maskCanvas) return
+    const canvas = drawingCanvasRef.current
+    if (!canvas) return
+
+    // Create a new canvas for mask export
+    const exportCanvas = document.createElement("canvas")
+    const exportCtx = exportCanvas.getContext("2d")
+    if (!exportCtx) return
+
+    exportCanvas.width = canvas.width
+    exportCanvas.height = canvas.height
+
+    // Fill with black background
+    exportCtx.fillStyle = "#000000"
+    exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height)
+
+    // Get the drawing canvas data
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const data = imageData.data
+
+    // Create mask: white where drawn, black elsewhere
+    const maskData = exportCtx.createImageData(canvas.width, canvas.height)
+    const maskPixels = maskData.data
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+      const a = data[i + 3]
+
+      if ((r < 50 && g > 200 && b > 200) || (r > 200 && g > 200 && b > 200)) {
+        maskPixels[i] = 255 // R
+        maskPixels[i + 1] = 255 // G
+        maskPixels[i + 2] = 255 // B
+        maskPixels[i + 3] = 255 // A
+      } else {
+        maskPixels[i] = 0 // R
+        maskPixels[i + 1] = 0 // G
+        maskPixels[i + 2] = 0 // B
+        maskPixels[i + 3] = 255 // A
+      }
+    }
+
+    exportCtx.putImageData(maskData, 0, 0)
 
     const maskName = `Mask_${new Date().toLocaleTimeString()}`
-    const dataUrl = maskCanvas.toDataURL()
+    const dataUrl = exportCanvas.toDataURL()
     const newMask: CreatedMask = {
       id: Date.now().toString(),
       name: maskName,
@@ -347,6 +349,11 @@ export default function ImageMaskTool() {
     setCreatedMasks((prev) => prev.filter((mask) => mask.id !== maskId))
   }
 
+  useEffect(() => {
+    drawDrawingCanvas()
+  }, [drawDrawingCanvas])
+
+  // Existing code
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -358,8 +365,8 @@ export default function ImageMaskTool() {
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
     // Draw base image if exists
-    if (drawingBaseImage) {
-      ctx.drawImage(drawingBaseImage, 0, 0, canvas.width, canvas.height)
+    if (baseImage) {
+      ctx.drawImage(baseImage, 0, 0, canvas.width, canvas.height)
     }
 
     // Draw masks with semi-transparent overlay
@@ -390,16 +397,11 @@ export default function ImageMaskTool() {
 
       ctx.restore()
     })
-  }, [drawingBaseImage, masks, selectedMask])
+  }, [baseImage, masks, selectedMask])
 
   useEffect(() => {
     drawCanvas()
   }, [drawCanvas])
-
-  useEffect(() => {
-    drawDrawingCanvas()
-    drawPreviewCanvas() // Also update preview
-  }, [drawDrawingCanvas, drawPreviewCanvas])
 
   const handleBaseImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -407,7 +409,7 @@ export default function ImageMaskTool() {
 
     const img = new Image()
     img.onload = () => {
-      setDrawingBaseImage(img)
+      setBaseImage(img)
 
       // Resize canvas to fit image
       const canvas = canvasRef.current
@@ -537,7 +539,7 @@ export default function ImageMaskTool() {
 
   const exportImage = () => {
     const canvas = canvasRef.current
-    if (!canvas || !drawingBaseImage) return
+    if (!canvas || !baseImage) return
 
     // Create a new canvas for export
     const exportCanvas = document.createElement("canvas")
@@ -600,20 +602,6 @@ export default function ImageMaskTool() {
           <p className="text-muted-foreground">
             Chỉnh sửa mask với drag & drop hoặc vẽ mask trực tiếp bằng brush/pen tool
           </p>
-          <div className="flex justify-center gap-4 mt-4">
-            <Button
-              variant={activeTab === "mask-editor" ? "default" : "outline"}
-              onClick={() => setActiveTab("mask-editor")}
-            >
-              📝 Mask Editor
-            </Button>
-            <Button
-              variant={activeTab === "drawing-tools" ? "default" : "outline"}
-              onClick={() => setActiveTab("drawing-tools")}
-            >
-              🎨 Vẽ Mask
-            </Button>
-          </div>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -674,7 +662,7 @@ export default function ImageMaskTool() {
                     </div>
                   )}
 
-                  <Button onClick={exportImage} disabled={!drawingBaseImage || masks.length === 0} className="w-full">
+                  <Button onClick={exportImage} disabled={!baseImage || masks.length === 0} className="w-full">
                     <Download className="w-4 h-4 mr-2" />
                     Xuất ảnh kết quả
                   </Button>
@@ -706,13 +694,13 @@ export default function ImageMaskTool() {
                     />
                   </div>
 
-                  {!drawingBaseImage && (
+                  {!baseImage && (
                     <p className="text-center text-muted-foreground mt-4">Vui lòng upload ảnh gốc để bắt đầu</p>
                   )}
-                  {drawingBaseImage && masks.length === 0 && (
+                  {baseImage && masks.length === 0 && (
                     <p className="text-center text-muted-foreground mt-4">Upload mask để bắt đầu kéo thả</p>
                   )}
-                  {drawingBaseImage && masks.length > 0 && (
+                  {baseImage && masks.length > 0 && (
                     <p className="text-center text-sm text-muted-foreground mt-2">
                       💡 Click mask để chọn (viền xanh lá), kéo để di chuyển. Dùng nút Zoom để thay đổi kích thước.
                     </p>
@@ -879,7 +867,7 @@ export default function ImageMaskTool() {
                       <Label>Pen Tool - {penPoints.length} điểm</Label>
                       <div className="flex gap-2">
                         <Button onClick={completePenPath} size="sm" className="flex-1" disabled={penPoints.length < 3}>
-                          Hoàn thành đa giác
+                          Hoàn thành
                         </Button>
                         <Button onClick={() => setPenPoints([])} size="sm" variant="outline" className="flex-1">
                           Hủy
@@ -913,7 +901,7 @@ export default function ImageMaskTool() {
 
                   <Button onClick={exportDrawnMask} disabled={!drawingBaseImage} className="w-full">
                     <Download className="w-4 h-4 mr-2" />
-                    Xuất mask (đen trắng)
+                    Xuất mask đã vẽ
                   </Button>
                 </CardContent>
               </Card>
@@ -922,14 +910,14 @@ export default function ImageMaskTool() {
               <Card className="lg:col-span-2">
                 <CardHeader>
                   <CardTitle>Canvas - Vẽ mask bằng {drawingTool === "brush" ? "Brush" : "Pen"} Tool</CardTitle>
-                  {isDrawing && <p className="text-sm text-green-600 font-medium">🎨 Đang vẽ vùng mask...</p>}
+                  {isDrawing && <p className="text-sm text-cyan-600 font-medium">🎨 Đang vẽ với brush...</p>}
                   {drawingTool === "pen" && penPoints.length > 0 && (
                     <p className="text-sm text-orange-600 font-medium">
-                      ✏️ Pen Tool - {penPoints.length} điểm đã chọn. Cần ít nhất 3 điểm để tạo đa giác.
+                      ✏️ Pen Tool - {penPoints.length} điểm đã chọn. Cần ít nhất 3 điểm để hoàn thành.
                     </p>
                   )}
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent>
                   <div className="border border-border rounded-lg p-4 bg-muted/20">
                     <canvas
                       ref={drawingCanvasRef}
@@ -939,7 +927,7 @@ export default function ImageMaskTool() {
                       style={{
                         cursor:
                           drawingTool === "brush"
-                            ? `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="${brushSize}" height="${brushSize}" viewBox="0 0 ${brushSize} ${brushSize}"><circle cx="${brushSize / 2}" cy="${brushSize / 2}" r="${brushSize / 2 - 1}" fill="none" stroke="%23FFFFFF" strokeWidth="2"/></svg>') ${brushSize / 2} ${brushSize / 2}, crosshair`
+                            ? `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="${brushSize}" height="${brushSize}" viewBox="0 0 ${brushSize} ${brushSize}"><circle cx="${brushSize / 2}" cy="${brushSize / 2}" r="${brushSize / 2 - 1}" fill="none" stroke="%2300FFFF" strokeWidth="2"/></svg>') ${brushSize / 2} ${brushSize / 2}, crosshair`
                             : "crosshair",
                       }}
                       onMouseDown={startDrawing}
@@ -949,32 +937,17 @@ export default function ImageMaskTool() {
                     />
                   </div>
 
-                  {/* Permanent preview canvas below */}
-                  <div>
-                    <h4 className="font-semibold mb-2 text-sm">🎭 Preview kết quả (ảnh gốc + mask):</h4>
-                    <div className="border border-border rounded-lg p-4 bg-muted/20">
-                      <canvas
-                        ref={previewCanvasRef}
-                        width={800}
-                        height={600}
-                        className="max-w-full h-auto border border-border rounded"
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-2 text-center">
-                      Chỉ vùng mask (trắng) hiển thị ảnh gốc, phần còn lại là đen
-                    </p>
-                  </div>
-
                   {!drawingBaseImage && (
                     <p className="text-center text-muted-foreground mt-4">Vui lòng upload ảnh gốc để bắt đầu vẽ</p>
                   )}
                   {drawingBaseImage && (
                     <div className="text-center text-sm text-muted-foreground mt-2 space-y-1">
                       <p>
-                        💡 <strong>Brush Tool:</strong> Vẽ vùng mask trên ảnh → Xem preview bên dưới
+                        💡 <strong>Brush Tool (Cyan):</strong> Click và kéo để vẽ mask màu xanh cyan
                       </p>
                       <p>
-                        💡 <strong>Pen Tool:</strong> Click tạo điểm → Hoàn thành đa giác → Xem preview bên dưới
+                        💡 <strong>Pen Tool (Orange):</strong> Click để tạo các điểm vàng, cần ít nhất 3 điểm để tạo
+                        vùng mask
                       </p>
                     </div>
                   )}
@@ -1005,10 +978,10 @@ export default function ImageMaskTool() {
                 <h4 className="font-semibold mb-2">Drawing Tools</h4>
                 <ol className="list-decimal list-inside space-y-1 text-sm text-muted-foreground">
                   <li>Upload ảnh gốc để vẽ mask</li>
-                  <li>Chọn Brush Tool để vẽ tự do (màu trắng)</li>
+                  <li>Chọn Brush Tool để vẽ tự do (màu cyan)</li>
                   <li>Chọn Pen Tool để tạo vùng chính xác (điểm vàng)</li>
                   <li>Dùng Undo/Redo để chỉnh sửa</li>
-                  <li>Xuất mask đen trắng và import vào Mask Editor</li>
+                  <li>Xuất mask đã vẽ và import vào Mask Editor</li>
                 </ol>
               </div>
             </div>
